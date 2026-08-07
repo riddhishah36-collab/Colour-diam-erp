@@ -12,8 +12,9 @@ type Tab = 'ledger' | 'report';
 
 export default function AccountsPage() {
   const navigate = useNavigate();
-  const { modules, refreshMeta } = useApp();
+  const { modules, refreshMeta, canEditModule, canViewModule } = useApp();
   const mod: ModuleMeta | undefined = modules.accounts;
+  const canEdit = canEditModule('accounts');
 
   const [tab, setTab] = useState<Tab>('ledger');
   const [rows, setRows] = useState<Row[]>([]);
@@ -51,7 +52,8 @@ export default function AccountsPage() {
 
   useEffect(() => {
     if (modules && !modules.accounts) navigate('/');
-  }, [modules, navigate]);
+    if (modules && !canViewModule('accounts')) navigate('/');
+  }, [modules, navigate, canViewModule]);
 
   if (!mod) return <div className="empty-state">Loading…</div>;
 
@@ -126,10 +128,12 @@ export default function AccountsPage() {
                 <Download size={15} />
                 Export CSV
               </a>
-              <button className="btn primary" onClick={() => setCreating(true)}>
-                <Plus size={16} />
-                New Entry
-              </button>
+              {canEdit && (
+                <button className="btn primary" onClick={() => setCreating(true)}>
+                  <Plus size={16} />
+                  New Entry
+                </button>
+              )}
             </>
           ) : (
             <button className="btn" onClick={() => void loadReport()}>
@@ -156,7 +160,7 @@ export default function AccountsPage() {
           <div className="empty-state">Loading ledger…</div>
         ) : (
           <div className="card">
-            <DataTable columns={cols} rows={rows} onEdit={setEditing} onDelete={setDeleting} />
+            <DataTable columns={cols} rows={rows} onEdit={setEditing} onDelete={canEdit ? setDeleting : undefined} />
             <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: 12 }}>
               {rows.length} of {mod.count} ledger entries shown
             </div>

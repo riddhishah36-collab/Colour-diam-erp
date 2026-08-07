@@ -77,6 +77,11 @@ router.get('/dashboard/summary', (_req, res) => {
   const accounts = data.accounts || [];
   const messages = data.messages || [];
   const returns = data.returns || [];
+  const customers = data.customers || [];
+  const leads = data.leads || [];
+  const invoices = data.invoices || [];
+  const payments = data.payments || [];
+  const quotations = data.quotations || [];
 
   const month = '2026-07';
   const sum = (rows, field) => rows.reduce((acc, r) => acc + toNumber(r[field]), 0);
@@ -87,6 +92,14 @@ router.get('/dashboard/summary', (_req, res) => {
 
   const pipeline = diamonds.filter((r) => r.status === 'Available');
   const pipelineValue = sum(pipeline, 'price');
+
+  const invoicesOpen = invoices.filter((r) => !['Paid', 'Cancelled', 'Draft'].includes(r.status));
+  const leadsOpen = leads.filter((r) => r.stage !== 'Lost');
+  const paymentsMonth = sum(payments.filter((r) => r.status === 'Completed' && (r.date || '').startsWith(month)), 'amount');
+
+  const stageOrder = ['New', 'Contacted', 'Qualified', 'Proposal', 'Won', 'Lost'];
+  const leadsByStage = {};
+  for (const s of stageOrder) leadsByStage[s] = leads.filter((r) => r.stage === s).length;
 
   res.json({
     counts: {
@@ -104,7 +117,29 @@ router.get('/dashboard/summary', (_req, res) => {
       payables: payableOpen,
       messagesUnread: messages.filter((r) => r.status === 'Unread').length,
       returnsOpen: returns.filter((r) => !['Restocked', 'Closed', 'Refunded', 'Exchanged'].includes(r.status)).length,
+      customers: customers.length,
+      leads: leadsOpen.length,
+      leadsByStage,
+      invoicesOpen: invoicesOpen.length,
+      invoicesValue: sum(invoicesOpen, 'total'),
+      invoicesTotal: sum(invoices, 'total'),
+      paymentsMonth,
+      quotationsOpen: quotations.filter((r) => ['Sent', 'Draft'].includes(r.status)).length,
     },
+    recentLeads: [...leads]
+      .sort((a, b) => String(b.lastContact || b.expectedClose || '').localeCompare(String(a.lastContact || a.expectedClose || '')))
+      .slice(0, 6)
+      .map((l) => ({
+        id: l.id,
+        name: l.name,
+        company: l.company,
+        stage: l.stage,
+        value: l.value,
+        priority: l.priority,
+        owner: l.owner,
+        expectedClose: l.expectedClose,
+        lastContact: l.lastContact,
+      })),
     recentDiamonds: [...diamonds]
       .sort((a, b) => String(b.stockNo).localeCompare(String(a.stockNo)))
       .slice(0, 6)
@@ -127,6 +162,61 @@ router.get('/dashboard/summary', (_req, res) => {
     recentActivity: buildRecentActivity(data),
     accountAging: buildAging(accounts),
   });
+});
+
+// ---- Notifications ----
+router.get('/notifications', (_req, res) => {
+  const data = db.load();
+  const out = [];
+  const today = new Date('2026-07-31');
+
+  for (const r of data.accounts || []) {
+    if (r.type === 'Receivable' && r.status === 'Overdue') {
+      out.push({ kind: 'overdue', severity: 'high', text: `${r.reference} from ${r.party} is overdue`, meta: `${toNumber(r.amount).toLocaleString()} due`, date: r.dueDate });
+    }
+  }
+  for (const r of data.memos || []) {
+    if (r.status === 'Outstanding' && r.dueDate) {
+      const due = new Date(r.dueDate);
+      const days = Math.ceil((due - today) / 86400000);
+      if (days < 0) {
+        out.push({ kind: 'memo', severity: 'medium', text: `Memo ${r.memoNo} to ${r.customer} is past due`, meta: `${-days}d late · ${toNumber(r.value).toLocaleString()}`, date: r.dueDate });
+      } else if (days <= 3) {
+        out.push({ kind: 'memo', severity: 'medium', text: `Memo ${r.memoNo} to ${r.customer} due soon`, meta: `in ${days}d · ${toNumber(r.value).toLocaleString()}`, date: r.dueDate });
+      }
+    }
+  }
+  for (const r of data.messages || []) {
+    if (r.status === 'Unread') {
+      out.push({ kind: 'message', severity: 'low', text: `Unread ${r.type} from ${r.from}`, meta: r.subject, date: r.date });
+    }
+  }
+  for (const r of data.tasks || []) {
+    if (r.status !== 'Done' && (r.priority === 'Urgent' || r.priority === 'High')) {
+      out.push({ kind: 'task', severity: 'high', text: `${r.priority} priority task: ${r.title}`, meta: r.assignee || 'Unassigned', date: r.dueDate });
+    }
+  }
+  for (const r of data.leads || []) {
+    if (r.stage === 'Proposal' && r.priority === 'Urgent') {
+      out.push({ kind: 'lead', severity: 'medium', text: `Proposal open with ${r.name}`, meta: `${toNumber(r.value).toLocaleString()} expected`, date: r.expectedClose });
+    }
+  }
+  for (const r of data.returns || []) {
+    if (['Received', 'Inspected'].includes(r.status)) {
+      out.push({ kind: 'return', severity: 'medium', text: `Return ${r.returnNo} from ${r.customer} awaiting action`, meta: r.reason, date: r.date });
+    }
+  }
+  out.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  res.json({ notifications: out.slice(0, 14) });
+});
+
+// ---- Full activity feed ----
+router.get('/activity', (req, res) => {
+  const data = db.load();
+  const { kind } = req.query;
+  let events = buildRecentActivity(data, 200);
+  if (kind) events = events.filter((e) => e.kind === kind);
+  res.json({ activity: events });
 });
 
 // ---- Accounts report ----
@@ -264,7 +354,7 @@ router.delete('/:module/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-function buildRecentActivity(data) {
+function buildRecentActivity(data, limit = 12) {
   const events = [];
   const push = (rows, kind, map) =>
     rows.forEach((r) => events.push(map(r)));
@@ -293,11 +383,35 @@ function buildRecentActivity(data) {
     date: r.date,
     meta: '',
   }));
+  push(data.invoices || [], 'invoice', (r) => ({
+    kind: 'invoice',
+    text: `Invoice ${r.invoiceNo} ${r.status.toLowerCase()} for ${r.customer}`,
+    date: r.date,
+    meta: `${toNumber(r.total).toLocaleString()}`,
+  }));
+  push(data.quotations || [], 'quote', (r) => ({
+    kind: 'quote',
+    text: `Quote ${r.quoteNo} ${r.status.toLowerCase()} for ${r.customer}`,
+    date: r.date,
+    meta: `${toNumber(r.total).toLocaleString()}`,
+  }));
+  push(data.payments || [], 'payment', (r) => ({
+    kind: 'payment',
+    text: `Payment ${r.paymentNo} ${r.status.toLowerCase()} from ${r.customer}`,
+    date: r.date,
+    meta: `${r.method} · ${toNumber(r.amount).toLocaleString()}`,
+  }));
+  push(data.leads || [], 'lead', (r) => ({
+    kind: 'lead',
+    text: `Lead ${r.name} moved to ${r.stage}`,
+    date: r.lastContact || r.expectedClose,
+    meta: r.company || r.source,
+  }));
 
   return events
     .filter((e) => e.date)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-    .slice(0, 12);
+    .slice(0, limit);
 }
 
 function buildAging(accounts) {

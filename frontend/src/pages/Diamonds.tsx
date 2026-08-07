@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Download,
@@ -7,14 +7,61 @@ import {
   RefreshCw,
   Table2,
   LayoutGrid,
+  SlidersHorizontal,
+  Save,
+  X,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { api, type Field, type ModuleMeta, type Row } from '../api';
 import { useApp } from '../AppContext';
 import DataTable from '../components/DataTable';
 import ModuleForm from '../components/ModuleForm';
-import { Modal, toast, money } from '../components/ui';
+import Drawer from '../components/Drawer';
+import { Modal, toast, money, Badge } from '../components/ui';
 
 type View = 'table' | 'visual';
+
+interface FilterState {
+  shapes: string[];
+  labs: string[];
+  colors: string[];
+  clarities: string[];
+  intensities: string[];
+  statuses: string[];
+  caratMin: string;
+  caratMax: string;
+  priceMin: string;
+  priceMax: string;
+}
+
+interface SavedFilter {
+  id: string;
+  name: string;
+  f: FilterState;
+}
+
+const EMPTY_FILTER: FilterState = {
+  shapes: [], labs: [], colors: [], clarities: [], intensities: [], statuses: [],
+  caratMin: '', caratMax: '', priceMin: '', priceMax: '',
+};
+
+const SAVED_KEY = 'cds.diamond.savedFilters';
+const SHAPES = ['Round', 'Pear', 'Oval', 'Emerald', 'Princess', 'Marquise', 'Asscher', 'Cushion', 'Radiant', 'Heart'];
+const LABS = ['GIA', 'IGI', 'HRD', 'SGL', 'AGS', 'None'];
+const COLORS = ['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+const CLARITIES = ['IF', 'VVS1', 'VVS2', 'VS1', 'VS2', 'SI1', 'SI2', 'I1', 'I2'];
+const INTENSITIES = ['None', 'Fancy Light', 'Fancy', 'Fancy Intense', 'Fancy Deep', 'Fancy Vivid', 'Fancy Dark'];
+const STATUSES = ['Available', 'On Memo', 'Reserved', 'Sold', 'Returned'];
+
+function loadSaved(): SavedFilter[] {
+  try {
+    const raw = localStorage.getItem(SAVED_KEY);
+    return raw ? (JSON.parse(raw) as SavedFilter[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 function csvDownload(href: string, filename: string) {
   const a = document.createElement('a');
@@ -76,7 +123,7 @@ function shapePath(shape: string, s: number, cx: number, cy: number): string {
   }
 }
 
-function StoneArt({ row, size = 110 }: { row: Row; size?: number }) {
+export function StoneArt({ row, size = 110 }: { row: Row; size?: number }) {
   const { base, glow } = colorFor(row);
   const carat = Number(row.carat) || 1;
   const s = Math.max(52, Math.min(96, 52 + carat * 16));
@@ -120,8 +167,10 @@ function StoneArt({ row, size = 110 }: { row: Row; size?: number }) {
 
 export default function Diamonds() {
   const navigate = useNavigate();
-  const { modules, refreshMeta } = useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { modules, refreshMeta, canEditModule, maskMoney: mask } = useApp();
   const mod: ModuleMeta | undefined = modules.diamonds;
+  const canEdit = canEditModule('diamonds');
 
   const [view, setView] = useState<View>('table');
   const [rows, setRows] = useState<Row[]>([]);
@@ -130,32 +179,117 @@ export default function Diamonds() {
   const [editing, setEditing] = useState<Row | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Row | null>(null);
+  const [detail, setDetail] = useState<Row | null>(null);
+  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTER);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [saved, setSaved] = useState<SavedFilter[]>(loadSaved);
+  const [saveName, setSaveName] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.list('diamonds', q ? { q } : {});
+      const res = await api.list('diamonds', { limit: '500' });
       setRows(res.rows);
     } catch (e) {
       toast.err(e instanceof Error ? e.message : 'Failed to load diamonds');
     } finally {
       setLoading(false);
     }
-  }, [q]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  // Handle /diamonds?new=1 and /diamonds?focus=<id>
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setCreating(true);
+      searchParams.delete('new');
+      setSearchParams(searchParams, { replace: true });
+    }
+    const focus = searchParams.get('focus');
+    if (focus) {
+      const row = rows.find((r) => r.id === focus);
+      if (row) setDetail(row);
+      searchParams.delete('focus');
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, rows]);
+
   useEffect(() => {
     if (modules && !modules.diamonds) navigate('/');
   }, [modules, navigate]);
+
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return rows.filter((d) => {
+      if (term) {
+        const hay = Object.values(d).join(' ').toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      if (filters.shapes.length && !filters.shapes.includes(String(d.shape))) return false;
+      if (filters.labs.length && !filters.labs.includes(String(d.lab))) return false;
+      if (filters.colors.length && !filters.colors.includes(String(d.color))) return false;
+      if (filters.clarities.length && !filters.clarities.includes(String(d.clarity))) return false;
+      if (filters.intensities.length && !filters.intensities.includes(String(d.intensity))) return false;
+      if (filters.statuses.length && !filters.statuses.includes(String(d.status))) return false;
+      const carat = Number(d.carat);
+      if (filters.caratMin && carat < Number(filters.caratMin)) return false;
+      if (filters.caratMax && carat > Number(filters.caratMax)) return false;
+      const price = Number(d.price);
+      if (filters.priceMin && price < Number(filters.priceMin)) return false;
+      if (filters.priceMax && price > Number(filters.priceMax)) return false;
+      return true;
+    });
+  }, [rows, q, filters]);
 
   if (!mod) {
     return <div className="empty-state">Loading…</div>;
   }
 
-  const cols: Field[] = mod.fields.filter((f) => f.type !== 'textarea' && !f.readonly).slice(0, 13);
+  const cols: Field[] = mod.fields.filter((f) => f.type !== 'textarea' && !f.readonly).slice(0, 12);
+
+  const toggle = (key: keyof FilterState, val: string) => {
+    setFilters((prev) => {
+      const arr = prev[key] as string[];
+      const next = arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val];
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const saveFilter = () => {
+    if (!saveName.trim()) return;
+    const item: SavedFilter = { id: `${Date.now()}`, name: saveName.trim(), f: filters };
+    const next = [...saved, item];
+    setSaved(next);
+    try {
+      localStorage.setItem(SAVED_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+    setSaveName('');
+    setSavingName(false);
+    toast.ok(`Filter "${item.name}" saved`);
+  };
+
+  const deleteSaved = (id: string) => {
+    const next = saved.filter((s) => s.id !== id);
+    setSaved(next);
+    try {
+      localStorage.setItem(SAVED_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const activeFilterCount =
+    filters.shapes.length + filters.labs.length + filters.colors.length +
+    filters.clarities.length + filters.intensities.length + filters.statuses.length +
+    (filters.caratMin ? 1 : 0) + (filters.caratMax ? 1 : 0) +
+    (filters.priceMin ? 1 : 0) + (filters.priceMax ? 1 : 0);
 
   const handleSave = async (values: Record<string, unknown>) => {
     try {
@@ -181,6 +315,7 @@ export default function Diamonds() {
       await api.remove('diamonds', deleting.id);
       toast.ok('Diamond deleted');
       setDeleting(null);
+      setDetail(null);
       await load();
       await refreshMeta();
     } catch (e) {
@@ -188,12 +323,14 @@ export default function Diamonds() {
     }
   };
 
+  const openDetail = (d: Row) => setDetail(d);
+
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Diamonds</h1>
-          <p>Graded fancy &amp; white diamond stock — certificate, lab, intensity, measurements, depth and table.</p>
+          <p>Graded fancy &amp; white diamond stock — filter, compare, and inspect full 4C detail.</p>
         </div>
         <div className="page-actions">
           <div className="search-input">
@@ -212,6 +349,11 @@ export default function Diamonds() {
               <LayoutGrid size={15} /> Visual
             </button>
           </div>
+          <button className={`btn ${filterOpen || activeFilterCount ? 'primary' : ''}`} onClick={() => setFilterOpen((o) => !o)}>
+            <SlidersHorizontal size={15} />
+            Filters
+            {activeFilterCount > 0 && <span className="chip-count">{activeFilterCount}</span>}
+          </button>
           <button className="btn" onClick={() => void load()}>
             <RefreshCw size={15} />
             Refresh
@@ -227,53 +369,149 @@ export default function Diamonds() {
             <Download size={15} />
             Export CSV
           </a>
-          <button className="btn primary" onClick={() => setCreating(true)}>
-            <Plus size={16} />
-            New Stone
-          </button>
+          {canEdit && (
+            <button className="btn primary" onClick={() => setCreating(true)}>
+              <Plus size={16} />
+              New Stone
+            </button>
+          )}
         </div>
       </div>
+
+      {saved.length > 0 && (
+        <div className="saved-filter-row">
+          {saved.map((s) => (
+            <span
+              key={s.id}
+              className={`saved-filter-chip ${JSON.stringify(s.f) === JSON.stringify(filters) ? 'on' : ''}`}
+              onClick={() => setFilters(s.f)}
+              title={`Apply "${s.name}"`}
+            >
+              {s.name}
+              <button
+                className="chip-x"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteSaved(s.id);
+                }}
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          <button className="btn small ghost" onClick={() => setFilters(EMPTY_FILTER)}>
+            Clear
+          </button>
+        </div>
+      )}
+
+      {filterOpen && (
+        <div className="filter-bar card">
+          <div className="filter-grid">
+            {([
+              ['shapes', 'Shape', SHAPES],
+              ['labs', 'Lab', LABS],
+              ['colors', 'Colour', COLORS],
+              ['clarities', 'Clarity', CLARITIES],
+              ['intensities', 'Intensity', INTENSITIES],
+              ['statuses', 'Status', STATUSES],
+            ] as [keyof FilterState, string, string[]][]).map(([key, label, options]) => (
+              <div className="filter-group" key={key}>
+                <div className="filter-label">{label}</div>
+                <div className="chip-group">
+                  {options.map((opt) => (
+                    <button
+                      key={opt}
+                      className={`chip ${(filters[key] as string[]).includes(opt) ? 'on' : ''}`}
+                      onClick={() => toggle(key, opt)}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div className="filter-group">
+              <div className="filter-label">Carat range</div>
+              <div className="range-inputs">
+                <input type="number" placeholder="Min" value={filters.caratMin} onChange={(e) => setFilters({ ...filters, caratMin: e.target.value })} />
+                <span>–</span>
+                <input type="number" placeholder="Max" value={filters.caratMax} onChange={(e) => setFilters({ ...filters, caratMax: e.target.value })} />
+              </div>
+            </div>
+            <div className="filter-group">
+              <div className="filter-label">Price range (USD)</div>
+              <div className="range-inputs">
+                <input type="number" placeholder="Min" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} />
+                <span>–</span>
+                <input type="number" placeholder="Max" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} />
+              </div>
+            </div>
+          </div>
+          <div className="filter-actions">
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {savingName ? (
+                <div className="inline-save">
+                  <input autoFocus placeholder="Filter name…" value={saveName} onChange={(e) => setSaveName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveFilter()} />
+                  <button className="btn small primary" onClick={saveFilter}><Save size={13} /> Save</button>
+                  <button className="btn small" onClick={() => setSavingName(false)}>Cancel</button>
+                </div>
+              ) : (
+                <button className="btn small" onClick={() => setSavingName(true)}>
+                  <Save size={13} /> Save this filter
+                </button>
+              )}
+            </div>
+            <button className="btn small ghost" onClick={() => setFilters(EMPTY_FILTER)}>Reset</button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="empty-state">Loading diamonds…</div>
       ) : view === 'table' ? (
         <div className="card">
-          <DataTable columns={cols} rows={rows} onEdit={setEditing} onDelete={setDeleting} />
+          <DataTable columns={cols} rows={filtered} onEdit={openDetail} onDelete={canEdit ? setDeleting : undefined} />
           <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: 12 }}>
-            {rows.length} of {mod.count} diamonds shown
+            {filtered.length} of {rows.length} diamonds shown
           </div>
         </div>
       ) : (
-        <div className="stone-grid">
-          {rows.map((d) => (
-            <div
-              key={d.id}
-              className="stone-card"
-              onClick={() => setEditing(d)}
-            >
-              <StoneArt row={d} />
-              <div className="stone-labels">
-                <div className="stock">{String(d.stockNo)}</div>
-                <div className="spec">
-                  {String(d.shape)} · {Number(d.carat).toFixed(2)}ct
+        <>
+          <div className="stone-grid">
+            {filtered.map((d) => (
+              <div
+                key={d.id}
+                className="stone-card"
+                onClick={() => openDetail(d)}
+              >
+                <StoneArt row={d} />
+                <div className="stone-labels">
+                  <div className="stock">{String(d.stockNo)}</div>
+                  <div className="spec">
+                    {String(d.shape)} · {Number(d.carat).toFixed(2)}ct
+                  </div>
+                  <div className="spec">
+                    {d.intensity && String(d.intensity) !== 'None' && String(d.modifier)
+                      ? `${d.intensity} ${d.modifier}`
+                      : `Colour ${d.color}`}{' '}
+                    · {String(d.clarity)}
+                  </div>
+                  <div className="price">{mask(d.price)}</div>
                 </div>
-                <div className="spec">
-                  {d.intensity && String(d.intensity) !== 'None' && String(d.modifier)
-                    ? `${d.intensity} ${d.modifier}`
-                    : `Colour ${d.color}`}{' '}
-                  · {String(d.clarity)}
+                <div className="stone-notes">
+                  {String(d.lab || '')} {d.certificate ? `· ${d.certificate}` : ''}
                 </div>
-                <div className="price">{money(d.price)}</div>
+                <span className={`badge ${d.status === 'Available' ? 'green' : d.status === 'On Memo' ? 'amber' : d.status === 'Sold' ? 'purple' : 'gray'}`}>
+                  {String(d.status)}
+                </span>
               </div>
-              <div className="stone-notes">
-                {String(d.lab || '')} {d.certificate ? `· ${d.certificate}` : ''}
-              </div>
-              <span className={`badge ${d.status === 'Available' ? 'green' : d.status === 'On Memo' ? 'amber' : d.status === 'Sold' ? 'purple' : 'gray'}`}>
-                {String(d.status)}
-              </span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+          {filtered.length === 0 && (
+            <div className="empty-state"><div className="big">◇</div>No stones match the current filters.</div>
+          )}
+        </>
       )}
 
       {(creating || editing) && (
@@ -318,6 +556,142 @@ export default function Diamonds() {
           </p>
         </Modal>
       )}
+
+      {detail && (
+        <DiamondDrawer
+          row={detail}
+          canEdit={canEdit}
+          mask={mask}
+          onEdit={() => {
+            setEditing(detail);
+            setDetail(null);
+          }}
+          onDelete={() => {
+            setDeleting(detail);
+            setDetail(null);
+          }}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </>
+  );
+}
+
+function DiamondDrawer({
+  row,
+  canEdit,
+  mask,
+  onEdit,
+  onDelete,
+  onClose,
+}: {
+  row: Row;
+  canEdit: boolean;
+  mask: (n: unknown) => string;
+  onEdit: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const [memos, setMemos] = useState<Row[]>([]);
+
+  useEffect(() => {
+    const stockNo = String(row.stockNo || '');
+    if (stockNo) {
+      api
+        .list('memos', { q: stockNo, limit: '5' })
+        .then((r) => setMemos(r.rows))
+        .catch(() => setMemos([]));
+    }
+  }, [row]);
+
+  const spec = [
+    ['Lab', String(row.lab || '—')],
+    ['Certificate', String(row.certificate || '—')],
+    ['Shape', String(row.shape || '—')],
+    ['Carat', `${Number(row.carat ?? 0).toFixed(2)} ct`],
+    ['Colour', String(row.color || '—')],
+    ['Clarity', String(row.clarity || '—')],
+    ['Cut', String(row.cut || '—')],
+    ['Polish', String(row.polish || '—')],
+    ['Symmetry', String(row.symmetry || '—')],
+    ['Fluorescence', String(row.fluorescence || '—')],
+    ['Intensity', String(row.intensity || '—')],
+    ['Modifier', String(row.modifier || '—')],
+    ['Measurements', String(row.measurements || '—')],
+    ['Depth', row.depth != null ? `${row.depth}%` : '—'],
+    ['Table', row.table != null ? `${row.table}%` : '—'],
+    ['Price', mask(row.price)],
+    ['Price / ct', mask(row.pricePerCarat)],
+    ['Location', String(row.location || '—')],
+    ['Status', String(row.status || '—')],
+  ];
+
+  return (
+    <Drawer title={`${row.stockNo}`} subtitle={`${row.shape || ''} · ${Number(row.carat ?? 0).toFixed(2)}ct`} onClose={onClose} wide>
+      <div className="detail-hero">
+        <StoneArt row={row} size={150} />
+        <div>
+          <div className="detail-title">{String(row.shape)} · {Number(row.carat).toFixed(2)}ct</div>
+          <div className="detail-sub">{String(row.lab)} {String(row.certificate)}</div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Badge value={row.status} />
+            {String(row.intensity) && String(row.intensity) !== 'None' && <Badge value={`${row.intensity} ${row.modifier}`} />}
+          </div>
+          <div className="detail-price">{mask(row.price)}</div>
+        </div>
+      </div>
+
+      <div className="detail-grid">
+        {spec.map(([k, v]) => (
+          <div className="detail-cell" key={k}>
+            <div className="dc-label">{k}</div>
+            <div className={`dc-value ${/price|ct/i.test(k) ? 'num' : ''}`}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {row.notes ? (
+        <div className="detail-section">
+          <h4>Notes</h4>
+          <p>{String(row.notes)}</p>
+        </div>
+      ) : null}
+
+      <div className="detail-section">
+        <h4>Related memos</h4>
+        {memos.length === 0 ? (
+          <div className="empty-state" style={{ padding: 16 }}>No memos reference this stone.</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr><th>Memo</th><th>Customer</th><th>Status</th><th className="num">Value</th></tr>
+              </thead>
+              <tbody>
+                {memos.map((m) => (
+                  <tr key={m.id}>
+                    <td className="mono">{String(m.memoNo)}</td>
+                    <td>{String(m.customer)}</td>
+                    <td><Badge value={m.status} /></td>
+                    <td className="num">{money(m.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {canEdit && (
+        <div className="drawer-actions">
+          <button className="btn danger" onClick={onDelete}>
+            <Trash2 size={15} /> Delete
+          </button>
+          <button className="btn primary" onClick={onEdit}>
+            <Pencil size={15} /> Edit
+          </button>
+        </div>
+      )}
+    </Drawer>
   );
 }

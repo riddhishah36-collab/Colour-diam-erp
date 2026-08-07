@@ -15,6 +15,14 @@ import {
   Workflow,
   Shield,
   BarChart3,
+  Users,
+  TrendingUp,
+  FilePlus,
+  CreditCard,
+  FileSignature,
+  ShoppingCart,
+  Activity as ActivityIcon,
+  Code2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -32,9 +40,27 @@ export interface NavGroup {
   items: NavItem[];
 }
 
+// Pages that get dedicated routes instead of the generic /m/:key module page.
+export const SPECIAL_MODULES = [
+  'diamonds',
+  'accounts',
+  'customers',
+  'leads',
+  'messages',
+  'invoices',
+  'payments',
+  'quotations',
+];
+
 const STATIC_PAGES: NavItem[] = [
-  { label: 'Dashboard', path: '/', icon: LayoutDashboard, group: 'Overview', keywords: 'home overview kpi stats' },
-  { label: 'Financial Report', path: '/reports', icon: BarChart3, group: 'Finance', keywords: 'accounts report aging cashflow receivable payable' },
+  { label: 'Dashboard', path: '/', icon: LayoutDashboard, group: 'Overview', keywords: 'home overview kpi stats dashboard' },
+  { label: 'Customers CRM', path: '/customers', icon: Users, group: 'CRM', keywords: 'customers crm contacts clients party timeline' },
+  { label: 'Leads Pipeline', path: '/leads', icon: TrendingUp, group: 'CRM', keywords: 'leads pipeline kanban opportunities deals' },
+  { label: 'Sales Workspace', path: '/sales', icon: ShoppingCart, group: 'Sales', keywords: 'sales workspace invoices payments quotations' },
+  { label: 'Messages', path: '/messages', icon: Mail, group: 'Operations', keywords: 'messages inbox whatsapp chat email sms' },
+  { label: 'Reports Centre', path: '/reports', icon: BarChart3, group: 'Finance', keywords: 'reports accounts aging cashflow receivable payable inventory' },
+  { label: 'Activity', path: '/activity', icon: ActivityIcon, group: 'Overview', keywords: 'activity feed timeline audit trail log' },
+  { label: 'API Explorer', path: '/api-explorer', icon: Code2, group: 'Admin', keywords: 'api explorer endpoints developer rest swagger' },
 ];
 
 const MODULE_ICONS: Record<string, LucideIcon> = {
@@ -52,9 +78,14 @@ const MODULE_ICONS: Record<string, LucideIcon> = {
   integrations: Plug,
   workflows: Workflow,
   roles: Shield,
+  customers: Users,
+  leads: TrendingUp,
+  invoices: FilePlus,
+  payments: CreditCard,
+  quotations: FileSignature,
 };
 
-const GROUP_ORDER = ['Overview', 'Inventory', 'Sales', 'Finance', 'Operations', 'Admin'];
+const GROUP_ORDER = ['Overview', 'Inventory', 'CRM', 'Sales', 'Finance', 'Operations', 'Admin'];
 
 export function buildNav(modules: Array<{ key: string; name: string; icon: string; group: string }>): NavGroup[] {
   const groups = new Map<string, NavItem[]>();
@@ -68,10 +99,11 @@ export function buildNav(modules: Array<{ key: string; name: string; icon: strin
   STATIC_PAGES.forEach(add);
 
   for (const m of modules) {
+    if (SPECIAL_MODULES.includes(m.key)) continue;
     const icon = MODULE_ICONS[m.key] || Package;
     add({
       label: m.name,
-      path: m.key === 'diamonds' ? '/diamonds' : m.key === 'accounts' ? '/accounts' : `/m/${m.key}`,
+      path: `/m/${m.key}`,
       module: m.key,
       icon,
       group: m.group || 'Admin',

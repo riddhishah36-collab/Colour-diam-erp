@@ -25,8 +25,9 @@ function csvDownload(href: string, filename: string) {
 export default function ModulePage() {
   const { key } = useParams<{ key: string }>();
   const navigate = useNavigate();
-  const { modules, refreshMeta } = useApp();
+  const { modules, refreshMeta, canEditModule, canViewModule } = useApp();
   const mod: ModuleMeta | undefined = modules[key || ''];
+  const canEdit = canEditModule(key || '');
 
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState('');
@@ -56,7 +57,8 @@ export default function ModulePage() {
     if (!mod && key && modules && !modules[key]) {
       navigate('/');
     }
-  }, [mod, key, modules, navigate]);
+    if (mod && !canViewModule(mod.key)) navigate('/');
+  }, [mod, key, modules, navigate, canViewModule]);
 
   if (!mod) {
     return (
@@ -135,10 +137,12 @@ export default function ModulePage() {
             <Download size={15} />
             Export CSV
           </a>
-          <button className="btn primary" onClick={() => setCreating(true)}>
-            <Plus size={16} />
-            New {mod.name.replace(/\s*&.*$/, '').replace(/\s+.*$/, '')}
-          </button>
+          {canEdit && (
+            <button className="btn primary" onClick={() => setCreating(true)}>
+              <Plus size={16} />
+              New {mod.name.replace(/\s*&.*$/, '').replace(/\s+.*$/, '')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -150,7 +154,7 @@ export default function ModulePage() {
             columns={cols}
             rows={rows}
             onEdit={setEditing}
-            onDelete={setDeleting}
+            onDelete={canEdit ? setDeleting : undefined}
           />
         )}
         <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', color: 'var(--text-faint)', fontSize: 12 }}>

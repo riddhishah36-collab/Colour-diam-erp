@@ -12,9 +12,13 @@ import {
   LayoutGrid,
   RotateCcw as ResetIcon,
   ArrowRight,
+  Users,
+  TrendingUp,
+  ShoppingCart,
 } from 'lucide-react';
 import { api, type AccountsReport, type DashboardData } from '../api';
-import { Modal, toast, money } from '../components/ui';
+import { Modal, toast } from '../components/ui';
+import { useApp } from '../AppContext';
 
 type Span = 3 | 4 | 6 | 8 | 12;
 
@@ -90,6 +94,7 @@ const dotColor: Record<string, string> = {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { maskMoney: mask } = useApp();
   const [dash, setDash] = useState<DashboardData | null>(null);
   const [report, setReport] = useState<AccountsReport | null>(null);
   const [config, setConfig] = useState<Config>({ order: [], hidden: [] });
@@ -106,9 +111,20 @@ export default function Dashboard() {
         render: () => (
           <Kpi
             label="Diamond inventory value"
-            value={money(dash?.counts.pipelineValue)}
+            value={mask(dash?.counts.pipelineValue)}
             sub={`${dash?.counts.diamondsAvailable ?? 0} available · ${dash?.counts.diamondsTotal ?? 0} total stones`}
             icon={Gem} color="var(--primary)"
+          />
+        ),
+      },
+      {
+        id: 'kpi-sales', title: 'Sales', desc: 'Open invoices & payments', span: 3,
+        render: () => (
+          <Kpi
+            label="Open invoices"
+            value={dash?.counts.invoicesOpen ?? 0}
+            sub={`${mask(dash?.counts.invoicesValue)} outstanding · ${mask(dash?.counts.paymentsMonth)} received this month`}
+            icon={ShoppingCart} color="var(--primary)"
           />
         ),
       },
@@ -117,7 +133,7 @@ export default function Dashboard() {
         render: () => (
           <Kpi
             label="Open receivables"
-            value={money(dash?.counts.receivables)}
+            value={mask(dash?.counts.receivables)}
             sub="Awaiting from customers"
             icon={Wallet} color="var(--green)"
           />
@@ -128,7 +144,7 @@ export default function Dashboard() {
         render: () => (
           <Kpi
             label="Open payables"
-            value={money(dash?.counts.payables)}
+            value={mask(dash?.counts.payables)}
             sub="Due to suppliers"
             icon={Receipt} color="var(--red)"
           />
@@ -139,7 +155,7 @@ export default function Dashboard() {
         render: () => (
           <Kpi
             label="Stock value"
-            value={money(dash?.counts.stockValue)}
+            value={mask(dash?.counts.stockValue)}
             sub={`${dash?.counts.products ?? 0} catalogue products`}
             icon={Warehouse} color="var(--teal)"
           />
@@ -162,7 +178,7 @@ export default function Dashboard() {
           <Kpi
             label="Outstanding memos"
             value={dash?.counts.memosOutstanding ?? 0}
-            sub={`${money(dash?.counts.memosValue)} on memo`}
+            sub={`${mask(dash?.counts.memosValue)} on memo`}
             icon={FileText} color="var(--amber)"
           />
         ),
@@ -172,7 +188,7 @@ export default function Dashboard() {
         render: () => (
           <Kpi
             label="July expenses"
-            value={money(dash?.counts.expensesMonth)}
+            value={mask(dash?.counts.expensesMonth)}
             sub="Month to date"
             icon={Receipt} color="var(--blue)"
           />
@@ -187,6 +203,86 @@ export default function Dashboard() {
             sub={`${dash?.counts.returnsOpen ?? 0} open returns`}
             icon={Mail} color="var(--red)"
           />
+        ),
+      },
+      {
+        id: 'kpi-leads', title: 'Leads', desc: 'Open opportunities', span: 3,
+        render: () => {
+          const byStage = dash?.counts.leadsByStage || {};
+          return (
+            <Kpi
+              label="Open leads"
+              value={dash?.counts.leads ?? 0}
+              sub={`${byStage.Proposal || 0} in proposal · ${byStage.Qualified || 0} qualified`}
+              icon={TrendingUp} color="var(--purple)"
+            />
+          );
+        },
+      },
+      {
+        id: 'kpi-customers', title: 'Customers', desc: 'CRM contacts', span: 3,
+        render: () => (
+          <Kpi
+            label="Customer records"
+            value={dash?.counts.customers ?? 0}
+            sub={`${dash?.counts.quotationsOpen ?? 0} open quotations`}
+            icon={Users} color="var(--teal)"
+          />
+        ),
+      },
+      {
+        id: 'leads-pipeline', title: 'Leads by stage', desc: 'Opportunity funnel', span: 4,
+        render: () => {
+          const byStage = dash?.counts.leadsByStage || {};
+          const order = ['New', 'Contacted', 'Qualified', 'Proposal', 'Won', 'Lost'];
+          const total = order.reduce((a, s) => a + (byStage[s] || 0), 0);
+          const colors: Record<string, string> = {
+            New: 'var(--text-faint)', Contacted: 'var(--blue)', Qualified: 'var(--amber)',
+            Proposal: 'var(--purple)', Won: 'var(--green)', Lost: 'var(--red)',
+          };
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {order.map((s) => (
+                <div key={s}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+                    <span style={{ fontWeight: 600 }}>{s}</span>
+                    <span style={{ color: 'var(--text-soft)' }}>{byStage[s] || 0}</span>
+                  </div>
+                  <div className="hbar-track">
+                    <div className="hbar-fill" style={{ width: `${total ? ((byStage[s] || 0) / total) * 100 : 0}%`, background: colors[s] }} />
+                  </div>
+                </div>
+              ))}
+              <button className="btn small ghost" style={{ alignSelf: 'flex-start' }} onClick={() => ctx.nav('/leads')}>
+                Open pipeline <ArrowRight size={13} />
+              </button>
+            </div>
+          );
+        },
+      },
+      {
+        id: 'notifications', title: 'Notifications', desc: 'Requiring attention', span: 4,
+        render: () => (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div className="notif-mini">
+              {[
+                { kind: 'Overdue', text: 'INV-3009 from Luxury Lines is overdue', sev: 'high' },
+                { kind: 'Memo', text: 'Memo M-0041 to R. Mehta is past due', sev: 'medium' },
+                { kind: 'Task', text: 'Renew vault insurance policy is urgent', sev: 'high' },
+                { kind: 'Message', text: 'Unread WhatsApp from S. Nair', sev: 'low' },
+              ].map((n, i) => (
+                <div className="activity-item" key={i}>
+                  <span className={`notif-kind k-${n.sev}`}>{n.kind}</span>
+                  <div>
+                    <div className="activity-text">{n.text}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="btn small ghost" style={{ alignSelf: 'flex-start' }} onClick={() => ctx.nav('/activity')}>
+              View activity <ArrowRight size={13} />
+            </button>
+          </div>
         ),
       },
       {
@@ -208,7 +304,7 @@ export default function Dashboard() {
                     <td>{d.intensity && d.intensity !== 'None' ? `${d.intensity} ${d.modifier}` : d.color}</td>
                     <td>{d.clarity}</td>
                     <td>{d.lab}</td>
-                    <td className="num">{money(d.price)}</td>
+                    <td className="num">{mask(d.price)}</td>
                     <td>
                       <span className={`badge ${d.status === 'Available' ? 'green' : d.status === 'On Memo' ? 'amber' : d.status === 'Sold' ? 'purple' : 'gray'}`}>
                         {d.status}
@@ -238,7 +334,7 @@ export default function Dashboard() {
                 <div key={r.label}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 5 }}>
                     <span style={{ fontWeight: 600 }}>{r.label}</span>
-                    <span style={{ color: 'var(--text-soft)' }}>{money(r.val)}</span>
+                    <span style={{ color: 'var(--text-soft)' }}>{mask(r.val)}</span>
                   </div>
                   <div className="hbar-track">
                     <div
@@ -307,8 +403,8 @@ export default function Dashboard() {
                 {series.map((s) => (
                   <div className="bar-col" key={s.month}>
                     <div className="bar-track">
-                      <div className="bar in" style={{ height: `${(s.in / max) * 100}%` }} title={`In ${money(s.in)}`} />
-                      <div className="bar out" style={{ height: `${(s.out / max) * 100}%` }} title={`Out ${money(s.out)}`} />
+                      <div className="bar in" style={{ height: `${(s.in / max) * 100}%` }} title={`In ${mask(s.in)}`} />
+                      <div className="bar out" style={{ height: `${(s.out / max) * 100}%` }} title={`Out ${mask(s.out)}`} />
                     </div>
                     <div className="bar-label">{s.month.slice(5)}</div>
                   </div>

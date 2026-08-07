@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowUp, ArrowDown, Pencil, Trash2 } from 'lucide-react';
 import type { Field, Row } from '../api';
 import { Badge, formatCell } from './ui';
+import { useApp } from '../AppContext';
 
 export type Column = Field;
 
@@ -24,6 +25,10 @@ export default function DataTable({
   rowKey?: string;
 }) {
   const [sort, setSort] = useState<SortState | null>(null);
+  const { canViewCosts } = useApp();
+
+  const isMoney = (c: Column) => /price|cost|amount|value/i.test(c.key);
+  const isStatus = (c: Column) => c.type === 'select' || c.key === 'status';
 
   const sorted = useMemo(() => {
     if (!sort) return rows;
@@ -45,10 +50,8 @@ export default function DataTable({
     });
   };
 
-  const isMoney = (c: Column) => /price|cost|amount|value/i.test(c.key);
-  const isStatus = (c: Column) => c.type === 'select' || c.key === 'status';
-
   const renderCell = (c: Column, value: unknown) => {
+    if (isMoney(c) && !canViewCosts) return '•••';
     const raw = Array.isArray(value) ? value.join(', ') : value;
     const str = String(raw ?? '');
     if (str.length > 46) {

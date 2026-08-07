@@ -76,6 +76,10 @@ export const api = {
   dashboard: () =>
     request<DashboardData>('/api/dashboard/summary'),
   accountsReport: () => request<AccountsReport>('/api/reports/accounts'),
+  notifications: () =>
+    request<{ notifications: AppNotification[] }>('/api/notifications'),
+  activity: () =>
+    request<{ activity: ActivityItem[] }>('/api/activity'),
   csvUrl: (mod: string, q = '') =>
     `/api/${mod}/export/csv${q ? `?q=${encodeURIComponent(q)}` : ''}`,
 };
@@ -95,6 +99,29 @@ export interface DashboardCounts {
   payables: number;
   messagesUnread: number;
   returnsOpen: number;
+  customers: number;
+  leads: number;
+  leadsByStage: Record<string, number>;
+  invoicesOpen: number;
+  invoicesValue: number;
+  invoicesTotal: number;
+  paymentsMonth: number;
+  quotationsOpen: number;
+}
+
+export interface AppNotification {
+  kind: string;
+  severity: string;
+  text: string;
+  meta: string;
+  date: string;
+}
+
+export interface ActivityItem {
+  kind: string;
+  text: string;
+  date: string;
+  meta: string;
 }
 
 export interface DashboardData {
@@ -119,6 +146,17 @@ export interface DashboardData {
     priority: string;
     status: string;
     dueDate: string;
+  }>;
+  recentLeads: Array<{
+    id: string;
+    name: string;
+    company: string;
+    stage: string;
+    value: number;
+    priority: string;
+    owner: string;
+    expectedClose: string;
+    lastContact: string;
   }>;
   recentActivity: Array<{ kind: string; text: string; date: string; meta: string }>;
   accountAging: { current: number; d30: number; d60: number; d90: number };
